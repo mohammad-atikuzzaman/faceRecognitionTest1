@@ -1,0 +1,2 @@
+This is a placeholder. The actual model files need to be downloaded from the face-api.js GitHub repository:
+https://github.com/justadudewhohacks/face-api.js/tree/master/weights
