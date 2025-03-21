@@ -1,15 +1,29 @@
-import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import Webcam from 'react-webcam';
-import * as faceapi from 'face-api.js';
-import axios from 'axios';
-import { Upload, Camera, RefreshCw, CheckCircle2, XCircle, User, AlertTriangle } from 'lucide-react';
+import React, {
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+  useMemo,
+} from "react";
+import Webcam from "react-webcam";
+import * as faceapi from "face-api.js";
+import axios from "axios";
+import {
+  Upload,
+  Camera,
+  RefreshCw,
+  CheckCircle2,
+  XCircle,
+  User,
+  AlertTriangle,
+} from "lucide-react";
 
 const RECOGNITION_INTERVAL = 100;
-const MATCH_THRESHOLD = 0.6;
+const MATCH_THRESHOLD = 0.5;
 const BOX_COLORS = {
-  match: '#22c55e',
-  noMatch: '#ef4444',
-  unknown: '#eab308'
+  match: "#22c55e",
+  noMatch: "#ef4444",
+  unknown: "#eab308",
 } as const;
 
 type UnknownFace = {
@@ -22,33 +36,40 @@ function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const recognitionInterval = useRef<number>();
   const unknownFacesRef = useRef<Map<string, UnknownFace>>(new Map());
-  
+
   const [isModelLoaded, setIsModelLoaded] = useState(false);
   const [referenceImage, setReferenceImage] = useState<string | null>(null);
-  const [referenceFaceDescriptor, setReferenceFaceDescriptor] = useState<Float32Array | null>(null);
+  const [referenceFaceDescriptor, setReferenceFaceDescriptor] =
+    useState<Float32Array | null>(null);
   const [isRecognizing, setIsRecognizing] = useState(false);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
-  const [selectedCamera, setSelectedCamera] = useState<string>('');
-  const [stats, setStats] = useState({ matchCount: 0, totalScans: 0, unknownCount: 0 });
-  const [userName, setUserName] = useState('');
+  const [selectedCamera, setSelectedCamera] = useState<string>("");
+  const [stats, setStats] = useState({
+    matchCount: 0,
+    totalScans: 0,
+    unknownCount: 0,
+  });
+  const [userName, setUserName] = useState("");
   const [isNameValid, setIsNameValid] = useState(false);
 
   const accuracy = useMemo(() => {
-    return stats.totalScans > 0 
-      ? ((stats.matchCount / stats.totalScans) * 100).toFixed(1) 
-      : '0.0';
+    return stats.totalScans > 0
+      ? ((stats.matchCount / stats.totalScans) * 100).toFixed(1)
+      : "0.0";
   }, [stats.matchCount, stats.totalScans]);
 
   const loadCameras = useCallback(async () => {
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = devices.filter(device => device.kind === 'videoinput');
+      const videoDevices = devices.filter(
+        (device) => device.kind === "videoinput"
+      );
       setCameras(videoDevices);
       if (videoDevices.length > 0) {
         setSelectedCamera(videoDevices[0].deviceId);
       }
     } catch (error) {
-      console.error('Error loading cameras:', error);
+      console.error("Error loading cameras:", error);
     }
   }, []);
 
@@ -56,13 +77,13 @@ function App() {
     const loadModels = async () => {
       try {
         await Promise.all([
-          faceapi.nets.ssdMobilenetv1.loadFromUri('/models'),
-          faceapi.nets.faceLandmark68Net.loadFromUri('/models'),
-          faceapi.nets.faceRecognitionNet.loadFromUri('/models')
+          faceapi.nets.ssdMobilenetv1.loadFromUri("/models"),
+          faceapi.nets.faceLandmark68Net.loadFromUri("/models"),
+          faceapi.nets.faceRecognitionNet.loadFromUri("/models"),
         ]);
         setIsModelLoaded(true);
       } catch (error) {
-        console.error('Error loading models:', error);
+        console.error("Error loading models:", error);
       }
     };
 
@@ -76,70 +97,128 @@ function App() {
     };
   }, [loadCameras]);
 
-  const notifyUnknownFace = async () => {
-    try {
-      await axios.post('http://localhost:3000/demo', {
-        timestamp: new Date().toISOString(),
-        userName: userName,
-        message: 'Unknown face detected'
-      });
-    } catch (error) {
-      console.error('Error notifying unknown face:', error);
-    }
+  const notifyUnknownFace = () => {
+    axios
+      .post("http://localhost:3000/demo", {
+        phone: "+8801729414662",
+      })
+      .then((res) => console.log(res.data))
+      .catch((err) => console.error(err));
   };
 
-  const handleImageUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file || !isNameValid) return;
+  class FalseTracker {
+    private falseCount: number;
+    private threshold: number;
+    private delay: number;
+    private timer: NodeJS.Timeout | null;
+    private alerted: boolean;
 
-    const imageUrl = URL.createObjectURL(file);
-    setReferenceImage(imageUrl);
-
-    try {
-      const img = await faceapi.fetchImage(imageUrl);
-      const detections = await faceapi.detectSingleFace(img)
-        .withFaceLandmarks()
-        .withFaceDescriptor();
-
-      if (detections) {
-        setReferenceFaceDescriptor(detections.descriptor);
-        setStats({ matchCount: 0, totalScans: 0, unknownCount: 0 });
-        unknownFacesRef.current.clear();
-      }
-    } catch (error) {
-      console.error('Error processing reference image:', error);
+    constructor(threshold: number = 3, delay: number = 5000) {
+      this.falseCount = 0;
+      this.threshold = threshold;
+      this.delay = delay;
+      this.timer = null;
+      this.alerted = false;
     }
-  }, [isNameValid]);
+
+    public check(value: boolean): void {
+      if (value) {
+        this.falseCount = 0; // Reset counter if true appears
+        this.alerted = false;
+        if (this.timer) {
+          clearTimeout(this.timer);
+          this.timer = null;
+        }
+      } else {
+        this.falseCount++;
+        if (this.falseCount >= this.threshold && !this.alerted) {
+          // console.log("Warning: Multiple false values detected!");
+          notifyUnknownFace();
+          this.alerted = true;
+
+          // If continues to be false, trigger again after delay
+          this.timer = setTimeout(() => {
+            this.alerted = false;
+          }, this.delay);
+        }
+      }
+    }
+  }
+
+  // Usage Example
+  const tracker = new FalseTracker(3, 5000);
+
+  const handleImageUpload = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file || !isNameValid) return;
+
+      const imageUrl = URL.createObjectURL(file);
+      setReferenceImage(imageUrl);
+
+      try {
+        const img = await faceapi.fetchImage(imageUrl);
+        const detections = await faceapi
+          .detectSingleFace(img)
+          .withFaceLandmarks()
+          .withFaceDescriptor();
+
+        if (detections) {
+          setReferenceFaceDescriptor(detections.descriptor);
+          setStats({ matchCount: 0, totalScans: 0, unknownCount: 0 });
+          unknownFacesRef.current.clear();
+        }
+      } catch (error) {
+        console.error("Error processing reference image:", error);
+      }
+    },
+    [isNameValid]
+  );
 
   const processFrame = useCallback(async () => {
-    if (!webcamRef.current?.video || !canvasRef.current || !referenceFaceDescriptor) return;
+    if (
+      !webcamRef.current?.video ||
+      !canvasRef.current ||
+      !referenceFaceDescriptor
+    )
+      return;
 
     const video = webcamRef.current.video;
     const canvas = canvasRef.current;
 
     try {
-      const detections = await faceapi.detectAllFaces(video)
+      const detections = await faceapi
+        .detectAllFaces(video)
         .withFaceLandmarks()
         .withFaceDescriptors();
 
-      const displaySize = { width: video.videoWidth, height: video.videoHeight };
+      const displaySize = {
+        width: video.videoWidth,
+        height: video.videoHeight,
+      };
       faceapi.matchDimensions(canvas, displaySize);
 
       const resizedDetections = faceapi.resizeResults(detections, displaySize);
-      const context = canvas.getContext('2d');
-      
+      const context = canvas.getContext("2d");
+
       if (context) {
         context.clearRect(0, 0, canvas.width, canvas.height);
 
         let matchesThisFrame = 0;
         let unknownThisFrame = 0;
 
-        resizedDetections.forEach(detection => {
-          const distance = faceapi.euclideanDistance(referenceFaceDescriptor, detection.descriptor);
+        resizedDetections.forEach((detection, index) => {
+          const distance = faceapi.euclideanDistance(
+            referenceFaceDescriptor,
+            detection.descriptor
+          );
           const isMatch = distance < MATCH_THRESHOLD;
-          
+
           if (isMatch) {
             matchesThisFrame++;
+            setTimeout(() => {
+              tracker.check(true);
+            }, index * 1000);
           } else {
             // Handle unknown face
             const faceId = detection.descriptor.toString();
@@ -147,47 +226,63 @@ function App() {
             const unknownFace = unknownFacesRef.current.get(faceId);
 
             if (!unknownFace) {
-              unknownFacesRef.current.set(faceId, { timestamp: now, notified: false });
+              unknownFacesRef.current.set(faceId, {
+                timestamp: now,
+                notified: false,
+              });
               unknownThisFrame++;
-            } else if (!unknownFace.notified && now - unknownFace.timestamp > 5000) {
-              notifyUnknownFace();
-              unknownFacesRef.current.set(faceId, { ...unknownFace, notified: true });
+              setTimeout(() => {
+                tracker.check(false);
+              }, index * 1000);
             }
+            //  else if (
+            //   !unknownFace.notified &&
+            //   now - unknownFace.timestamp > 5000
+            // ) {
+            //   notifyUnknownFace();
+            //   unknownFacesRef.current.set(faceId, {
+            //     timestamp: now,
+            //     notified: true,
+            //   });
+            // }
           }
 
           new faceapi.draw.DrawBox(detection.detection.box, {
-            label: isMatch ? `Match: ${userName}` : 'Unknown Person',
+            label: isMatch ? `Match: ${userName}` : "Unknown Person",
             boxColor: isMatch ? BOX_COLORS.match : BOX_COLORS.unknown,
             lineWidth: 2,
             drawLabelOptions: {
               fontSize: 16,
-              fontStyle: 'bold',
-              padding: 8
-            }
+              fontStyle: "bold",
+              padding: 8,
+            },
           }).draw(canvas);
         });
 
         if (resizedDetections.length > 0) {
-          setStats(prev => ({
+          setStats((prev) => ({
             matchCount: prev.matchCount + matchesThisFrame,
             totalScans: prev.totalScans + resizedDetections.length,
-            unknownCount: prev.unknownCount + unknownThisFrame
+            unknownCount: prev.unknownCount + unknownThisFrame,
           }));
         }
       }
     } catch (error) {
-      console.error('Error processing frame:', error);
+      console.error("Error processing frame:", error);
     }
   }, [referenceFaceDescriptor, userName]);
 
   const startFaceRecognition = useCallback(() => {
     if (!referenceFaceDescriptor || !isNameValid) return;
-    
+
     setIsRecognizing(true);
     setStats({ matchCount: 0, totalScans: 0, unknownCount: 0 });
     unknownFacesRef.current.clear();
 
-    recognitionInterval.current = window.setInterval(processFrame, RECOGNITION_INTERVAL);
+    recognitionInterval.current = window.setInterval(
+      processFrame,
+      RECOGNITION_INTERVAL
+    );
 
     return () => {
       if (recognitionInterval.current) {
@@ -212,10 +307,12 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 p-8">
-      <div className="max-w-5xl mx-auto">
+      <div className="container mx-auto">
         <div className="bg-white bg-opacity-10 backdrop-blur-lg rounded-2xl shadow-2xl p-8 mb-8">
           <div className="flex items-center justify-between mb-8">
-            <h1 className="text-4xl font-bold text-white">Face Recognition System</h1>
+            <h1 className="text-4xl font-bold text-white">
+              Face Recognition System
+            </h1>
             <div className="flex items-center space-x-2">
               <select
                 value={selectedCamera}
@@ -248,10 +345,12 @@ function App() {
                 />
               </div>
             </div>
-            
+
             <div className="bg-gray-800 rounded-xl p-6">
               <div className="mb-6">
-                <h2 className="text-xl font-semibold text-white mb-4">User Information</h2>
+                <h2 className="text-xl font-semibold text-white mb-4">
+                  User Information
+                </h2>
                 <div className="mb-4">
                   <label className="block text-gray-300 mb-2">Your Name</label>
                   <div className="relative">
@@ -296,7 +395,7 @@ function App() {
                     <span className="font-semibold">{accuracy}%</span>
                   </div>
                   <div className="mt-2 h-2 bg-gray-600 rounded-full overflow-hidden">
-                    <div 
+                    <div
                       className="h-full bg-blue-500 rounded-full transition-all duration-300"
                       style={{ width: `${accuracy}%` }}
                     />
@@ -309,14 +408,18 @@ function App() {
                       <CheckCircle2 className="w-5 h-5" />
                       <span>Matches</span>
                     </div>
-                    <div className="text-2xl font-bold text-white mt-1">{stats.matchCount}</div>
+                    <div className="text-2xl font-bold text-white mt-1">
+                      {stats.matchCount}
+                    </div>
                   </div>
                   <div className="bg-gray-700 rounded-lg p-4">
                     <div className="flex items-center space-x-2 text-yellow-400">
                       <AlertTriangle className="w-5 h-5" />
                       <span>Unknown</span>
                     </div>
-                    <div className="text-2xl font-bold text-white mt-1">{stats.unknownCount}</div>
+                    <div className="text-2xl font-bold text-white mt-1">
+                      {stats.unknownCount}
+                    </div>
                   </div>
                   <div className="bg-gray-700 rounded-lg p-4">
                     <div className="flex items-center space-x-2 text-red-400">
@@ -335,21 +438,35 @@ function App() {
           <div className="flex justify-center">
             <button
               onClick={startFaceRecognition}
-              disabled={!isModelLoaded || !referenceFaceDescriptor || isRecognizing || !isNameValid}
+              disabled={
+                !isModelLoaded ||
+                !referenceFaceDescriptor ||
+                isRecognizing ||
+                !isNameValid
+              }
               className={`flex items-center px-8 py-4 rounded-xl text-white font-semibold text-lg
-                ${isModelLoaded && referenceFaceDescriptor && !isRecognizing && isNameValid
-                  ? 'bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800'
-                  : 'bg-gray-700 cursor-not-allowed'
+                ${
+                  isModelLoaded &&
+                  referenceFaceDescriptor &&
+                  !isRecognizing &&
+                  isNameValid
+                    ? "bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800"
+                    : "bg-gray-700 cursor-not-allowed"
                 } transition-all duration-300 shadow-lg`}
             >
               <Camera className="w-6 h-6 mr-3" />
-              {!isModelLoaded ? 'Loading Models...' : 
-                !isNameValid ? 'Enter Your Name' :
-                isRecognizing ? 'Recognition Active' : 'Start Recognition'}
+              {!isModelLoaded
+                ? "Loading Models..."
+                : !isNameValid
+                ? "Enter Your Name"
+                : isRecognizing
+                ? "Recognition Active"
+                : "Start Recognition"}
             </button>
           </div>
         </div>
       </div>
+      <button onClick={() => notifyUnknownFace()}>test</button>
     </div>
   );
 }
