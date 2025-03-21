@@ -99,7 +99,7 @@ function App() {
 
   const notifyUnknownFace = () => {
     axios
-      .post("http://localhost:3000/demo", {
+      .post("http://localhost:3000/call-owner", {
         phone: "+8801729414662",
       })
       .then((res) => console.log(res.data))
