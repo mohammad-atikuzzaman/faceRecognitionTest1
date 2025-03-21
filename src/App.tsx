@@ -113,7 +113,7 @@ function App() {
     private timer: NodeJS.Timeout | null;
     private alerted: boolean;
 
-    constructor(threshold: number = 3, delay: number = 5000) {
+    constructor(threshold: number = 5, delay: number = 60000) {
       this.falseCount = 0;
       this.threshold = threshold;
       this.delay = delay;
@@ -146,7 +146,7 @@ function App() {
   }
 
   // Usage Example
-  const tracker = new FalseTracker(3, 5000);
+  const tracker = new FalseTracker(5, 60000);
 
   const handleImageUpload = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -218,7 +218,7 @@ function App() {
             matchesThisFrame++;
             setTimeout(() => {
               tracker.check(true);
-            }, index * 1000);
+            }, index * 60000);
           } else {
             // Handle unknown face
             const faceId = detection.descriptor.toString();
